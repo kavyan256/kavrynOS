@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "common.h"
 
 extern char __bss[], __bss_end[], __stack_top[];
 
@@ -22,14 +23,12 @@ struct sbiret sbi_call(long arg0, long arg1, long arg2, long arg3, long arg4,   
 }
 
 void putchar(char ch) {
-    sbi_call(ch, 0, 0, 0, 0, 0, 0, 1 /* Console Putchar */);
+    sbi_call(ch, 0, 0, 0, 0, 0, 0, 1 );
 }
 
 void kernel_main(void) {
-    const char *s = "\n\nHello World!\n";
-    for (int i = 0; s[i] != '\0'; i++) {
-        putchar(s[i]);
-    }
+    printf("\n\nHello %s\n", "World!");
+    printf("1 + 2 = %d, %x\n", 1 + 2, 0x1234abcd);
 
     for (;;) {
         __asm__ __volatile__("wfi");
@@ -82,3 +81,23 @@ void boot(void) {
 }
 
 */ 
+
+/*
+KERNEL_V0.2 WITH HELLO WORLD
+
+void putchar(char ch) {
+    sbi_call(ch, 0, 0, 0, 0, 0, 0, 1 );
+}
+
+void kernel_main(void) {
+const char *s = "\n\nHello World!\n";
+for (int i = 0; s[i] != '\0'; i++) {
+    putchar(s[i]);
+}
+
+for (;;) {
+    __asm__ __volatile__("wfi");
+}
+}
+
+*/
