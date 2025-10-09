@@ -25,6 +25,11 @@ SECTIONS {
     . = ALIGN(4);               /*stack allocation*/
     . += 128 * 1024; /* 128KB */
     __stack_top = .;
+
+    . = ALIGN(4096);
+    __free_ram = .;
+    . += 64 * 1024 * 1024; /* 64MB */
+    __free_ram_end = .;
 }
 
 /* entry(boot) declares that the bot functino is the entry point of the program, and then the placement of each section is defined within the sections block
@@ -32,12 +37,4 @@ SECTIONS {
  * 
  * The . symbol represents the current address. It automatically increments as data is placed, such as with *(.text). The statement . += 128 * 1024 means "advance the current address by 128KB". 
  * The ALIGN(4) directive ensures that the current address is adjusted to a 4-byte boundary.
- *
- *
- *
- *
- *
- *
- *
- *
  */
