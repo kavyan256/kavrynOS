@@ -2,6 +2,7 @@ ENTRY(boot)
 
 SECTIONS {
     . = 0x80200000;            /* sets the starting address (2gb + 2mb) */
+    __kernel_base = .;
 
     .text :{                    /*executable code*/
         KEEP(*(.text.boot));

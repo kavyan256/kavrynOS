@@ -46,7 +46,7 @@ struct trap_frame {
     uint32_t s10;
     uint32_t s11;
     uint32_t sp;
-} __attribute__((packed));
+} __attribute__(()); //undid packed
 
 //CONTROL AND STATUS REGISTERS
 #define READ_CSR(reg)                                                          \
@@ -70,8 +70,17 @@ struct trap_frame {
 #define PROC_RUNNABLE 1   // Runnable process
 
 struct process {
-    int pid;             // Process ID
-    int state;           // Process state: PROC_UNUSED or PROC_RUNNABLE
-    vaddr_t sp;          // Stack pointer
-    uint8_t stack[8192]; // Kernel stack
+    int pid;
+    int state;
+    vaddr_t sp;
+    uint32_t *page_table;
+    uint8_t stack[8192];
 };
+
+//PAGE TABLE MACROS
+#define SATP_SV32 (1u << 31)
+#define PAGE_V    (1 << 0)   // "Valid" bit (entry is enabled)
+#define PAGE_R    (1 << 1)   // Readable
+#define PAGE_W    (1 << 2)   // Writable
+#define PAGE_X    (1 << 3)   // Executable
+#define PAGE_U    (1 << 4)   // User (accessible in user mode)

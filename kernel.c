@@ -1,8 +1,66 @@
 #include "kernel.h"
 #include "common.h"
 
-extern char __bss[], __bss_end[], __stack_top[] ,__free_ram[], __free_ram_end[];
+extern char __bss[], __bss_end[], __stack_top[] ,__free_ram[], __free_ram_end[], __kernel_base[];
 extern void main(void); // tell compiler main() exists
+
+// Function declarations
+paddr_t alloc_pages(uint32_t n);
+void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags);
+void putchar(char ch);
+void handle_trap(struct trap_frame *f);
+void kernel_entry(void);
+void switch_context(uint32_t *prev_sp, uint32_t *next_sp);
+struct process *create_process(uint32_t pc);
+void yield(void);
+void delay(void);
+void proc_a_entry(void);
+void proc_b_entry(void);
+void kernel_main(void);
+void boot(void);
+
+//GLOBAL VARIABLES
+struct process procs[PROCS_MAX]; // All process control structures.
+struct process *current_proc; // Currently running process
+struct process *idle_proc;    // Idle process
+struct process *proc_a;
+struct process *proc_b;
+
+//MEMORY MANAGEMENT
+paddr_t alloc_pages(uint32_t n) {
+    static paddr_t next_paddr = (paddr_t) __free_ram;
+    paddr_t paddr = next_paddr;
+    next_paddr += n * PAGE_SIZE;
+
+    if (next_paddr > (paddr_t) __free_ram_end) {
+        PANIC("out of memory: requested %d pages, available space exceeded", n);
+    }
+
+    memset((void *) paddr, 0, n * PAGE_SIZE);
+    return paddr;
+}
+
+void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags) {
+    if (!is_aligned(vaddr, PAGE_SIZE))
+        PANIC("unaligned vaddr %x", vaddr);
+
+    if (!is_aligned(paddr, PAGE_SIZE))
+        PANIC("unaligned paddr %x", paddr);
+
+    uint32_t vpn1 = (vaddr >> 22) & 0x3ff;
+    if ((table1[vpn1] & PAGE_V) == 0) {
+        // Create the 1st level page table if it doesn't exist.
+        uint32_t pt_paddr = alloc_pages(1);
+        table1[vpn1] = ((pt_paddr / PAGE_SIZE) << 10) | PAGE_V;
+    }
+
+    // Set the 2nd level page table entry to map the physical page.
+    uint32_t vpn0 = (vaddr >> 12) & 0x3ff;
+    uint32_t *table0 = (uint32_t *) ((table1[vpn1] >> 10) * PAGE_SIZE);
+    table0[vpn0] = ((paddr / PAGE_SIZE) << 10) | flags | PAGE_V;
+}
+
+//SBI INTERFACE
 
 struct sbiret sbi_call(long arg0, long arg1, long arg2, long arg3, long arg4,       //registers
                        long arg5, long fid, long eid) {
@@ -87,19 +145,6 @@ void kernel_entry(void) {
     );
 }
 
-paddr_t alloc_pages(uint32_t n) {
-    static paddr_t next_paddr = (paddr_t) __free_ram;
-    paddr_t paddr = next_paddr;
-    next_paddr += n * PAGE_SIZE;
-
-    if (next_paddr > (paddr_t) __free_ram_end) {
-        PANIC("out of memory: requested %d pages, available space exceeded", n);
-    }
-
-    memset((void *) paddr, 0, n * PAGE_SIZE);
-    return paddr;
-}
-
 //CONTEXT SWITCHING
 __attribute__((naked)) void switch_context(uint32_t *prev_sp,
                                            uint32_t *next_sp) {
@@ -144,14 +189,12 @@ __attribute__((naked)) void switch_context(uint32_t *prev_sp,
 }
 
 //PROCESS MANAGEMENT
-struct process procs[PROCS_MAX]; // All process control structures.
-
 struct process *create_process(uint32_t pc) {
-    // Find an unused process control structure.
+    // 1️⃣ Find an unused process slot
     struct process *proc = NULL;
     int i;
     for (i = 0; i < PROCS_MAX; i++) {
-        if (procs[i].state == PROC_UNUSED) {
+        if (procs[i].state == PROC_UNUSED) {   // <-- ensure your array is named `proc[]`
             proc = &procs[i];
             break;
         }
@@ -160,36 +203,50 @@ struct process *create_process(uint32_t pc) {
     if (!proc)
         PANIC("no free process slots");
 
-    // Stack callee-saved registers. These register values will be restored in
-    // the first context switch in switch_context.
-    uint32_t *sp = (uint32_t *) &proc->stack[sizeof(proc->stack)];
-    *--sp = 0;                      // s11
-    *--sp = 0;                      // s10
-    *--sp = 0;                      // s9
-    *--sp = 0;                      // s8
-    *--sp = 0;                      // s7
-    *--sp = 0;                      // s6
-    *--sp = 0;                      // s5
-    *--sp = 0;                      // s4
-    *--sp = 0;                      // s3
-    *--sp = 0;                      // s2
-    *--sp = 0;                      // s1
-    *--sp = 0;                      // s0
-    *--sp = (uint32_t) pc;          // ra
+    // 2️⃣ Allocate a page table for this process
+    uint32_t *page_table = (uint32_t *) alloc_pages(1);
+    memset(page_table, 0, PAGE_SIZE);
 
-    // Initialize fields.
+    // 3️⃣ Identity-map the kernel space so the process can use kernel code/data
+    for (paddr_t paddr = (paddr_t) __kernel_base;
+         paddr < (paddr_t) __free_ram_end;
+         paddr += PAGE_SIZE) {
+        map_page(page_table, paddr, paddr, PAGE_R | PAGE_W | PAGE_X);
+    }
+
+    // 4️⃣ Initialize the process stack
+    // Stack grows down, so start from the end of the stack array
+    uint32_t *sp = (uint32_t *) &proc->stack[sizeof(proc->stack)];
+
+    // These values correspond to the callee-saved registers (s0–s11, ra)
+    // They will be popped by switch_context when the process runs
+    *--sp = 0;                // s11
+    *--sp = 0;                // s10
+    *--sp = 0;                // s9
+    *--sp = 0;                // s8
+    *--sp = 0;                // s7
+    *--sp = 0;                // s6
+    *--sp = 0;                // s5
+    *--sp = 0;                // s4
+    *--sp = 0;                // s3
+    *--sp = 0;                // s2
+    *--sp = 0;                // s1
+    *--sp = 0;                // s0
+    *--sp = (uint32_t) pc;    // ra — so the process starts executing at `pc`
+
+    // 5️⃣ Initialize metadata
     proc->pid = i + 1;
     proc->state = PROC_RUNNABLE;
     proc->sp = (uint32_t) sp;
+    proc->page_table = page_table;
+
     return proc;
 }
 
-//SCHEDULER
-struct process *current_proc; // Currently running process
-struct process *idle_proc;    // Idle process
 
+//SCHEDULER
 void yield(void) {
-    // Search for a runnable process
+    // Find next runnable process
     struct process *next = idle_proc;
     for (int i = 0; i < PROCS_MAX; i++) {
         struct process *proc = &procs[(current_proc->pid + i) % PROCS_MAX];
@@ -199,19 +256,25 @@ void yield(void) {
         }
     }
 
-    // If there's no runnable process other than the current one, return and continue processing
+    // If only current process is runnable, return
     if (next == current_proc)
         return;
 
-    __asm__ __volatile__(
-        "csrw sscratch, %[sscratch]\n"
-        :
-        : [sscratch] "r" ((uint32_t) &next->stack[sizeof(next->stack)])
-    );
-
-    // Context switch
     struct process *prev = current_proc;
     current_proc = next;
+
+    // Switch MMU context to next process’s address space
+    __asm__ __volatile__(
+        "sfence.vma\n"
+        "csrw satp, %[satp]\n"
+        "sfence.vma\n"
+        "csrw sscratch, %[sscratch]\n"
+        :
+        : [satp] "r" (SATP_SV32 | ((uint32_t) next->page_table / PAGE_SIZE)),
+          [sscratch] "r" ((uint32_t) &next->stack[sizeof(next->stack)])
+    );
+
+    // Finally switch CPU context (stack + registers)
     switch_context(&prev->sp, &next->sp);
 }
 
@@ -220,13 +283,12 @@ void delay(void) {
         __asm__ __volatile__("nop"); // do nothing
 }
 
-struct process *proc_a;
-struct process *proc_b;
-
+//PROCESS ENTRIES
 void proc_a_entry(void) {
     printf("starting process A\n");
     while (1) {
         putchar('A');
+        delay();
         yield();
     }
 }
@@ -235,11 +297,10 @@ void proc_b_entry(void) {
     printf("starting process B\n");
     while (1) {
         putchar('B');
+        delay();
         yield();
     }
 }
-
-
 
 
 
@@ -264,8 +325,9 @@ void kernel_main(void) {
     proc_b = create_process((uint32_t) proc_b_entry);
 
     // Run the user application directly
-    printf("Running user application...\n");
-    main();  // This calls the main() function from user.c
+    printf("Running process a and b...\n");
+    proc_a_entry();
+    //main();  // This calls the main() function from user.c
     
     PANIC("unreachable here!");
 }
