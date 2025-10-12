@@ -1,5 +1,5 @@
 #pragma once
-
 #include "common.h"
 
-void main(void);
+__attribute__((noreturn)) void exit(void);
+void putchar(char ch);

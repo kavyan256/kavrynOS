@@ -1,8 +1,22 @@
 #include "user.h"
 
-void main(void) {
+extern char __stack_top[];
+
+__attribute__((noreturn)) void exit(void) {
+    for (;;);
+}
+
+void putchar(char ch) {
+    /* TODO */
+}
+
+__attribute__((section(".text.start")))
+__attribute__((naked))
+void start(void) {
     __asm__ __volatile__(
-        "li sp, 0xdeadbeef\n"  // Set an invalid address to sp
-        "unimp"                // Trigger an exception
+        "mv sp, %[stack_top] \n"
+        "call main           \n"
+        "call exit           \n"
+        :: [stack_top] "r" (__stack_top)
     );
 }

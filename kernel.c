@@ -1,8 +1,8 @@
 #include "kernel.h"
 #include "common.h"
 
-extern char __bss[], __bss_end[], __stack_top[] ,__free_ram[], __free_ram_end[], __kernel_base[];
-extern void main(void); // tell compiler main() exists
+extern char __bss[], __bss_end[], __stack_top[] ,__free_ram[], __free_ram_end[], __kernel_base[], _binary_shell_bin_start[], _binary_shell_bin_size[];
+extern void main(void);
 
 // Function declarations
 paddr_t alloc_pages(uint32_t n);
@@ -23,6 +23,7 @@ void boot(void);
 struct process procs[PROCS_MAX]; // All process control structures.
 struct process *current_proc; // Currently running process
 struct process *idle_proc;    // Idle process
+
 struct process *proc_a;
 struct process *proc_b;
 
@@ -61,7 +62,6 @@ void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags) {
 }
 
 //SBI INTERFACE
-
 struct sbiret sbi_call(long arg0, long arg1, long arg2, long arg3, long arg4,       //registers
                        long arg5, long fid, long eid) {
     register long a0 __asm__("a0") = arg0;
@@ -85,12 +85,9 @@ void putchar(char ch) {
     sbi_call(ch, 0, 0, 0, 0, 0, 0, 1 );
 }
 
-void handle_trap(struct trap_frame *f) {
-    uint32_t scause = READ_CSR(scause);
-    uint32_t stval = READ_CSR(stval);
-    uint32_t user_pc = READ_CSR(sepc);
-
-    PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval, user_pc);
+long getchar(void) {
+    struct sbiret ret = sbi_call(0, 0, 0, 0, 0, 0, 0, 2);
+    return ret.error;
 }
 
 __attribute__((naked))
@@ -186,6 +183,10 @@ __attribute__((naked)) void switch_context(uint32_t *prev_sp,
         "addi sp, sp, 13 * 4\n"  // We've popped 13 4-byte registers from the stack
         "ret\n"
     );
+}
+
+void user_entry(void) {
+    PANIC("not yet implemented");
 }
 
 //PROCESS MANAGEMENT
@@ -300,6 +301,14 @@ void proc_b_entry(void) {
         delay();
         yield();
     }
+}
+
+void handle_trap(struct trap_frame *f) {
+    uint32_t scause = READ_CSR(scause);
+    uint32_t stval = READ_CSR(stval);
+    uint32_t user_pc = READ_CSR(sepc);
+
+    PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval, user_pc);
 }
 
 
