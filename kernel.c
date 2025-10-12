@@ -11,7 +11,7 @@ void putchar(char ch);
 void handle_trap(struct trap_frame *f);
 void kernel_entry(void);
 void switch_context(uint32_t *prev_sp, uint32_t *next_sp);
-struct process *create_process(uint32_t pc);
+struct process *create_process(const void *image, size_t image_size);
 void yield(void);
 void delay(void);
 void proc_a_entry(void);
@@ -185,17 +185,25 @@ __attribute__((naked)) void switch_context(uint32_t *prev_sp,
     );
 }
 
-void user_entry(void) {
-    PANIC("not yet implemented");
+// ↓ __attribute__((naked)) is very important!
+__attribute__((naked)) void user_entry(void) {
+    __asm__ __volatile__(
+        "csrw sepc, %[sepc]        \n"
+        "csrw sstatus, %[sstatus]  \n"
+        "sret                      \n"
+        :
+        : [sepc] "r" (USER_BASE),
+          [sstatus] "r" (SSTATUS_SPIE)
+    );
 }
 
 //PROCESS MANAGEMENT
-struct process *create_process(uint32_t pc) {
+struct process *create_process(const void *image, size_t image_size) {
     // 1️⃣ Find an unused process slot
     struct process *proc = NULL;
     int i;
     for (i = 0; i < PROCS_MAX; i++) {
-        if (procs[i].state == PROC_UNUSED) {   // <-- ensure your array is named `proc[]`
+        if (procs[i].state == PROC_UNUSED) {
             proc = &procs[i];
             break;
         }
@@ -206,21 +214,33 @@ struct process *create_process(uint32_t pc) {
 
     // 2️⃣ Allocate a page table for this process
     uint32_t *page_table = (uint32_t *) alloc_pages(1);
-    memset(page_table, 0, PAGE_SIZE);
 
-    // 3️⃣ Identity-map the kernel space so the process can use kernel code/data
+    // 3️⃣ Map kernel pages (identity mapping)
     for (paddr_t paddr = (paddr_t) __kernel_base;
-         paddr < (paddr_t) __free_ram_end;
-         paddr += PAGE_SIZE) {
+         paddr < (paddr_t) __free_ram_end; paddr += PAGE_SIZE)
         map_page(page_table, paddr, paddr, PAGE_R | PAGE_W | PAGE_X);
+
+    // 4️⃣ Map user pages (if image provided)
+    if (image && image_size > 0) {
+        for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
+            paddr_t page = alloc_pages(1);
+
+            // Handle the case where the data to be copied is smaller than the
+            // page size.
+            size_t remaining = image_size - off;
+            size_t copy_size = PAGE_SIZE <= remaining ? PAGE_SIZE : remaining;
+
+            // Fill and map the page.
+            memcpy((void *) page, image + off, copy_size);
+            map_page(page_table, USER_BASE + off, page,
+                     PAGE_U | PAGE_R | PAGE_W | PAGE_X);
+        }
     }
 
-    // 4️⃣ Initialize the process stack
-    // Stack grows down, so start from the end of the stack array
+    // 5️⃣ Initialize the process stack
     uint32_t *sp = (uint32_t *) &proc->stack[sizeof(proc->stack)];
 
     // These values correspond to the callee-saved registers (s0–s11, ra)
-    // They will be popped by switch_context when the process runs
     *--sp = 0;                // s11
     *--sp = 0;                // s10
     *--sp = 0;                // s9
@@ -233,9 +253,9 @@ struct process *create_process(uint32_t pc) {
     *--sp = 0;                // s2
     *--sp = 0;                // s1
     *--sp = 0;                // s0
-    *--sp = (uint32_t) pc;    // ra — so the process starts executing at `pc`
+    *--sp = (uint32_t) user_entry;    // ra — so the process starts at user_entry
 
-    // 5️⃣ Initialize metadata
+    // 6️⃣ Initialize metadata
     proc->pid = i + 1;
     proc->state = PROC_RUNNABLE;
     proc->sp = (uint32_t) sp;
@@ -284,7 +304,7 @@ void delay(void) {
         __asm__ __volatile__("nop"); // do nothing
 }
 
-//PROCESS ENTRIES
+//SAMPLE PROCESS ENTRIES
 void proc_a_entry(void) {
     printf("starting process A\n");
     while (1) {
@@ -318,27 +338,18 @@ void handle_trap(struct trap_frame *f) {
 
 void kernel_main(void) {
     memset(__bss, 0, (size_t) __bss_end - (size_t) __bss);
-
+    printf("Kernel started\n\n");
     WRITE_CSR(stvec, (uint32_t) kernel_entry);
 
-    const char *s = "\n\nHello World!\n";
-    for (int i = 0; s[i] != '\0'; i++) {
-        putchar(s[i]);
-    }
-
-    idle_proc = create_process((uint32_t) NULL);
+    idle_proc = create_process(NULL, 0); // updated!
     idle_proc->pid = 0; // idle
     current_proc = idle_proc;
 
-    proc_a = create_process((uint32_t) proc_a_entry);
-    proc_b = create_process((uint32_t) proc_b_entry);
+    create_process(_binary_shell_bin_start, (size_t) _binary_shell_bin_size);
 
-    // Run the user application directly
-    printf("Running process a and b...\n");
-    proc_a_entry();
-    //main();  // This calls the main() function from user.c
+    yield();
     
-    PANIC("unreachable here!");
+    PANIC("switched to idle process");
 }
 
 __attribute__((section(".text.boot")))

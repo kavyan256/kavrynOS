@@ -1,5 +1,6 @@
 #pragma once
-
+#define SSTATUS_SPIE (1 << 5)
+#define SCAUSE_ECALL 8
 
 #define PANIC(fmt, ...)                                                        \
     do {                                                                       \
