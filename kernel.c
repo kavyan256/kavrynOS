@@ -20,6 +20,9 @@ void kernel_main(void);
 void boot(void);
 struct virtio_virtq *virtq_init(unsigned index);
 void virtio_blk_init(void);
+void fs_init(void);
+void fs_flush(void);
+struct file *fs_lookup(const char *filename);
 
 //GLOBAL VARIABLES
 struct process procs[PROCS_MAX]; // All process control structures.
@@ -230,7 +233,7 @@ __attribute__((naked)) void user_entry(void) {
         "sret                      \n"
         :
         : [sepc] "r" (USER_BASE),
-          [sstatus] "r" (SSTATUS_SPIE)
+          [sstatus] "r" (SSTATUS_SPIE | SSTATUS_SUM)
     );
 }
 
@@ -393,6 +396,33 @@ void handle_syscall(struct trap_frame *f) {
             current_proc->state = PROC_EXITED;
             yield();
             PANIC("unreachable");
+
+        case SYS_READFILE:
+        case SYS_WRITEFILE: {
+            const char *filename = (const char *) f->a0;
+            char *buf = (char *) f->a1;
+            int len = f->a2;
+            struct file *file = fs_lookup(filename);
+            if (!file) {
+                printf("file not found: %s\n", filename);
+                f->a0 = -1;
+                break;
+            }
+
+            if (len > (int) sizeof(file->data))
+                len = file->size;
+
+            if (f->a3 == SYS_WRITEFILE) {
+                memcpy(file->data, buf, len);
+                file->size = len;
+                fs_flush();
+            } else {
+                memcpy(buf, file->data, len);
+            }
+
+            f->a0 = len;
+            break;
+        }
 
         default:
             PANIC("unexpected syscall a3=%x\n", f->a3);
@@ -630,7 +660,15 @@ void fs_flush(void) {
     printf("wrote %d bytes to disk\n", sizeof(disk));
 }
 
+struct file *fs_lookup(const char *filename) {
+    for (int i = 0; i < FILES_MAX; i++) {
+        struct file *file = &files[i];
+        if (!strcmp(file->name, filename))
+            return file;
+    }
 
+    return NULL;
+}
 
 
 

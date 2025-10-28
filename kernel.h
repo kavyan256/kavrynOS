@@ -197,3 +197,5 @@ struct file {
     char data[1024];  // File content
     size_t size;      // File size
 };
+
+#define SSTATUS_SUM  (1 << 18)
