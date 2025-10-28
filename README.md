@@ -1,4 +1,4 @@
-# kaOS
+# Ka-OS
 
 A minimal educational operating system written in C for RISC-V 32-bit architecture. This OS demonstrates fundamental operating system concepts including process management, memory management, system calls, and file system operations.
 
@@ -105,7 +105,7 @@ cat hello.txt
 ## File Structure
 
 ```
-kaOS/
+KaOS/
 ├── kernel.c          # Kernel implementation
 ├── kernel.h          # Kernel headers and structures
 ├── kernel.ld         # Kernel linker script
