@@ -25,7 +25,8 @@ int getchar(void) {
 }
 
 __attribute__((noreturn)) void exit(void) {
-    for (;;);
+    syscall(SYS_EXIT, 0, 0, 0);
+    for (;;); // Just in case!
 }
 
 __attribute__((section(".text.start")))
