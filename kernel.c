@@ -139,6 +139,41 @@ void kernel_entry(void) {
 
         "mv a0, sp\n"
         "call handle_trap\n"
+
+        // Restore registers
+        "lw ra,  4 * 0(sp)\n"
+        "lw gp,  4 * 1(sp)\n"
+        "lw tp,  4 * 2(sp)\n"
+        "lw t0,  4 * 3(sp)\n"
+        "lw t1,  4 * 4(sp)\n"
+        "lw t2,  4 * 5(sp)\n"
+        "lw t3,  4 * 6(sp)\n"
+        "lw t4,  4 * 7(sp)\n"
+        "lw t5,  4 * 8(sp)\n"
+        "lw t6,  4 * 9(sp)\n"
+        "lw a0,  4 * 10(sp)\n"
+        "lw a1,  4 * 11(sp)\n"
+        "lw a2,  4 * 12(sp)\n"
+        "lw a3,  4 * 13(sp)\n"
+        "lw a4,  4 * 14(sp)\n"
+        "lw a5,  4 * 15(sp)\n"
+        "lw a6,  4 * 16(sp)\n"
+        "lw a7,  4 * 17(sp)\n"
+        "lw s0,  4 * 18(sp)\n"
+        "lw s1,  4 * 19(sp)\n"
+        "lw s2,  4 * 20(sp)\n"
+        "lw s3,  4 * 21(sp)\n"
+        "lw s4,  4 * 22(sp)\n"
+        "lw s5,  4 * 23(sp)\n"
+        "lw s6,  4 * 24(sp)\n"
+        "lw s7,  4 * 25(sp)\n"
+        "lw s8,  4 * 26(sp)\n"
+        "lw s9,  4 * 27(sp)\n"
+        "lw s10, 4 * 28(sp)\n"
+        "lw s11, 4 * 29(sp)\n"
+        "lw sp,  4 * 30(sp)\n"
+
+        "sret\n"
     );
 }
 
@@ -237,6 +272,13 @@ struct process *create_process(const void *image, size_t image_size) {
         }
     }
 
+    // Map user stack
+    for (int i = 0; i < USER_STACK_PAGES; i++) {
+        paddr_t page = alloc_pages(1);
+        map_page(page_table, USER_STACK_TOP - PAGE_SIZE * (i + 1), page,
+                 PAGE_U | PAGE_R | PAGE_W);
+    }
+
     // 5️⃣ Initialize the process stack
     uint32_t *sp = (uint32_t *) &proc->stack[sizeof(proc->stack)];
 
@@ -323,12 +365,28 @@ void proc_b_entry(void) {
     }
 }
 
+void handle_syscall(struct trap_frame *f) {
+    switch (f->a3) {
+        case SYS_PUTCHAR:
+            putchar(f->a0);
+            break;
+        default:
+            PANIC("unexpected syscall a3=%x\n", f->a3);
+    }
+}
+
 void handle_trap(struct trap_frame *f) {
     uint32_t scause = READ_CSR(scause);
     uint32_t stval = READ_CSR(stval);
     uint32_t user_pc = READ_CSR(sepc);
+    if (scause == SCAUSE_ECALL) {
+        handle_syscall(f);
+        user_pc += 4;
+    } else {
+        PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval, user_pc);
+    }
 
-    PANIC("unexpected trap scause=%x, stval=%x, sepc=%x\n", scause, stval, user_pc);
+    WRITE_CSR(sepc, user_pc);
 }
 
 

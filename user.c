@@ -24,10 +24,6 @@ __attribute__((noreturn)) void exit(void) {
     for (;;);
 }
 
-void putchar(char ch) {
-    /* TODO */
-}
-
 __attribute__((section(".text.start")))
 __attribute__((naked))
 void start(void) {

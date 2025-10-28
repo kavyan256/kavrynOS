@@ -87,3 +87,5 @@ struct process {
 #define PAGE_U    (1 << 4)   // User (accessible in user mode)
 
 #define USER_BASE 0x1000000
+#define USER_STACK_PAGES 1
+#define USER_STACK_TOP (USER_BASE + 0x100000) 
